@@ -151,7 +151,7 @@ export function createChatServer(
       const path = (req.url || '/')
         .split('?')[0];
 
-      if (
+           if (
         req.method === 'GET' &&
         (
           path === '/' ||
@@ -162,9 +162,15 @@ export function createChatServer(
           res,
           ready ? 200 : 503,
           {
-            service:
-              'Smart Da Nang Gemini backend',
+            service: 'Smart Da Nang Gemini backend',
+            build: 'render-config-check-1',
             ready,
+            checks: {
+              hasGeminiKey: Boolean(apiKey),
+              relayLength: secret.length,
+              relayFormatValid:
+                /^[a-f0-9]{64}$/.test(secret),
+            },
           },
         );
       }
