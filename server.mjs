@@ -1,3 +1,4 @@
+import { MAX_BYTES, validInput, googleContents } from './chat-contract.mjs';
 import http from 'node:http';
 
 import {
@@ -10,7 +11,7 @@ import {
 } from 'node:url';
 
 const MODEL = 'gemini-3.5-flash-lite';
-const MAX_BYTES = 16000;
+
 
 const SYSTEM = `
 Bạn là trợ lý du lịch Smart Da Nang Travel,
@@ -19,6 +20,8 @@ tập trung vào Đà Nẵng.
 Trả lời ngắn gọn bằng văn bản thuần,
 theo ngôn ngữ được yêu cầu.
 Hỏi lại khi thiếu thông tin.
+Nếu người dùng gửi ảnh, phân tích nội dung nhìn thấy và trả lời câu hỏi dựa trên ảnh.
+Nêu rõ khi ảnh mờ hoặc chưa đủ chi tiết; không khẳng định tên địa điểm nếu không chắc chắn.
 
 Hiện chưa kết nối dữ liệu địa điểm, GPS,
 thời tiết hay lịch trình của ứng dụng
@@ -105,31 +108,6 @@ function readBody(req) {
   });
 }
 
-function validInput(value) {
-  return (
-    value &&
-    ['vi', 'en', 'ko', 'ja', 'zh'].includes(
-      value.language,
-    ) &&
-    Array.isArray(value.messages) &&
-    value.messages.length >= 1 &&
-    value.messages.length <= 7 &&
-    value.messages.every((message, index) => (
-      message &&
-      message.role === (
-        index % 2 === 0
-          ? 'user'
-          : 'assistant'
-      ) &&
-      typeof message.text === 'string' &&
-      message.text.trim().length > 0 &&
-      message.text.length <= 2000
-    )) &&
-    value.messages.at(-1).role === 'user' &&
-    value.messages.at(-1).text.length <= 1000
-  );
-}
-
 export function createChatServer(
   env = process.env,
   callGoogle = fetch,
@@ -163,7 +141,8 @@ export function createChatServer(
           ready ? 200 : 503,
           {
             service: 'Smart Da Nang Gemini backend',
-            build: 'render-config-check-1',
+            build: 'image-chat-1',
+            capabilities: { imageInput: true },
             ready,
             checks: {
               hasGeminiKey: Boolean(apiKey),
@@ -261,7 +240,7 @@ export function createChatServer(
           {
             method: 'POST',
             signal:
-              AbortSignal.timeout(25000),
+              AbortSignal.timeout(35000),
             headers: {
               'Content-Type':
                 'application/json',
@@ -279,20 +258,7 @@ export function createChatServer(
                   },
                 ],
               },
-              contents: body.messages.map(
-                message => ({
-                  role:
-                    message.role === 'assistant'
-                      ? 'model'
-                      : 'user',
-                  parts: [
-                    {
-                      text:
-                        message.text.trim(),
-                    },
-                  ],
-                }),
-              ),
+              contents: googleContents(body.messages),
               generationConfig: {
                 maxOutputTokens: 512,
               },
@@ -322,8 +288,14 @@ export function createChatServer(
             googleStatus:
               detail?.error?.status,
             message:
-              message.slice(0, 1200),
+              body.messages.some(message => message.image)
+                  ? 'Image request rejected by provider'
+                  : message.slice(0, 1200),
           });
+
+          if (response.status === 400 && detail?.error?.status === 'INVALID_ARGUMENT' && body.messages.some(message => message.image)) {
+            return send(res, 400, { code: 'IMAGE_UNREADABLE' });
+          }
 
           if (response.status === 429) {
             return send(
@@ -400,7 +372,7 @@ export function createChatServer(
     },
   );
 
-  server.requestTimeout = 15000;
+  server.requestTimeout = 30000;
 
   return server;
 }
